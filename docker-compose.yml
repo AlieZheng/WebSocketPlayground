@@ -1,0 +1,48 @@
+services:
+  kafka:
+    image: docker.redpanda.com/redpandadata/redpanda:v24.2.12
+    hostname: kafka
+    environment:
+      REDPANDA_DEVELOPER_MODE: true
+    command:
+      - redpanda start
+      - --smp 1
+      - --overprovisioned
+      - --kafka-addr PLAINTEXT://0.0.0.0:29092,OUTSIDE://0.0.0.0:9092
+      - --advertise-kafka-addr PLAINTEXT://kafka:29092,OUTSIDE://localhost:9092
+      - --unsafe-bypass-fsync
+      - --check=false
+      - --set group_max_session_timeout_ms=3000
+      - --set kafka_group_recovery_timeout_ms=3000
+    ports:
+      - 8081:8081
+      - 8082:8082
+      - 9092:9092
+      - 9644:9644
+      - 29092:29092
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:9644/v1/status/ready"]
+      interval: 1s
+      timeout: 1s
+      retries: 60
+
+  redpanda-console:
+    image: docker.redpanda.com/redpandadata/console:v2.8.10
+    ports:
+      - "8080:8080"
+    environment:
+      KAFKA_BROKERS: "kafka:29092"
+      KAFKA_SCHEMAREGISTRY_ENABLED: "true"
+      KAFKA_SCHEMAREGISTRY_URLS: "http://kafka:8081"
+      REDPANDA_ADMINAPI_ENABLED: "true"
+      REDPANDA_ADMINAPI_URLS: "http://kafka:9644"
+    depends_on:
+      - kafka
+
+  redis:
+    container_name: redis
+    image: "058337015204.dkr.ecr.ap-southeast-2.amazonaws.com/docker-hub/library/redis:${REDIS_VERSION-7.2}"
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+

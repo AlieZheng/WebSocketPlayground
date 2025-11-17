@@ -1,0 +1,29 @@
+{
+  "Files": [
+    {
+      "Id": "D:\\Projects\\WebSocketPlayground\\WebSocketPlayground\\WebSocketPlayground\\wwwroot\\test-client.html",
+      "PackagePath": "staticwebassets\\test-client.html"
+    },
+    {
+      "Id": "obj\\Debug\\net9.0\\staticwebassets\\msbuild.WebSocketPlayground.Microsoft.AspNetCore.StaticWebAssetEndpoints.props",
+      "PackagePath": "build\\Microsoft.AspNetCore.StaticWebAssetEndpoints.props"
+    },
+    {
+      "Id": "obj\\Debug\\net9.0\\staticwebassets\\msbuild.WebSocketPlayground.Microsoft.AspNetCore.StaticWebAssets.props",
+      "PackagePath": "build\\Microsoft.AspNetCore.StaticWebAssets.props"
+    },
+    {
+      "Id": "obj\\Debug\\net9.0\\staticwebassets\\msbuild.build.WebSocketPlayground.props",
+      "PackagePath": "build\\WebSocketPlayground.props"
+    },
+    {
+      "Id": "obj\\Debug\\net9.0\\staticwebassets\\msbuild.buildMultiTargeting.WebSocketPlayground.props",
+      "PackagePath": "buildMultiTargeting\\WebSocketPlayground.props"
+    },
+    {
+      "Id": "obj\\Debug\\net9.0\\staticwebassets\\msbuild.buildTransitive.WebSocketPlayground.props",
+      "PackagePath": "buildTransitive\\WebSocketPlayground.props"
+    }
+  ],
+  "ElementsToRemove": []
+}

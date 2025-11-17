@@ -1,0 +1,16 @@
+﻿<Project>
+  <ItemGroup>
+    <StaticWebAssetEndpoint Include="_content/WebSocketPlayground/test-client.html">
+      <AssetFile>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\staticwebassets\test-client.html'))</AssetFile>
+      <Selectors><![CDATA[[]]]></Selectors>
+      <EndpointProperties><![CDATA[[{"Name":"integrity","Value":"sha256-fXC6K9AUSsQDtzhnmEt9cjXrsYCAvaJJC3ylY2K4/Rc="}]]]></EndpointProperties>
+      <ResponseHeaders><![CDATA[[{"Name":"Accept-Ranges","Value":"bytes"},{"Name":"Cache-Control","Value":"no-cache"},{"Name":"Content-Length","Value":"13796"},{"Name":"Content-Type","Value":"text/html"},{"Name":"ETag","Value":"\u0022fXC6K9AUSsQDtzhnmEt9cjXrsYCAvaJJC3ylY2K4/Rc=\u0022"},{"Name":"Last-Modified","Value":"Mon, 17 Nov 2025 10:46:46 GMT"}]]]></ResponseHeaders>
+    </StaticWebAssetEndpoint>
+    <StaticWebAssetEndpoint Include="_content/WebSocketPlayground/test-client.px81lihfyq.html">
+      <AssetFile>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\staticwebassets\test-client.html'))</AssetFile>
+      <Selectors><![CDATA[[]]]></Selectors>
+      <EndpointProperties><![CDATA[[{"Name":"fingerprint","Value":"px81lihfyq"},{"Name":"integrity","Value":"sha256-fXC6K9AUSsQDtzhnmEt9cjXrsYCAvaJJC3ylY2K4/Rc="},{"Name":"label","Value":"_content/WebSocketPlayground/test-client.html"}]]]></EndpointProperties>
+      <ResponseHeaders><![CDATA[[{"Name":"Accept-Ranges","Value":"bytes"},{"Name":"Cache-Control","Value":"max-age=31536000, immutable"},{"Name":"Content-Length","Value":"13796"},{"Name":"Content-Type","Value":"text/html"},{"Name":"ETag","Value":"\u0022fXC6K9AUSsQDtzhnmEt9cjXrsYCAvaJJC3ylY2K4/Rc=\u0022"},{"Name":"Last-Modified","Value":"Mon, 17 Nov 2025 10:46:46 GMT"}]]]></ResponseHeaders>
+    </StaticWebAssetEndpoint>
+  </ItemGroup>
+</Project>
