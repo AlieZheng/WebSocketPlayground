@@ -40,7 +40,6 @@ services:
       - kafka
 
   redis:
-    container_name: redis
     image: "058337015204.dkr.ecr.ap-southeast-2.amazonaws.com/docker-hub/library/redis:${REDIS_VERSION-7.2}"
     restart: unless-stopped
     ports:
