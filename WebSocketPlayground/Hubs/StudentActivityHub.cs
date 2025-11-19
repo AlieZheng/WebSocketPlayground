@@ -259,7 +259,7 @@ public class StudentActivityHub : Hub
             {
                 _logger.LogInformation("Resolving conflict: Keeping old connection for UserId={UserId}", userId);
 
-                // Notify and disconnect new connection
+                // Notify new connection before disconnecting it
                 await Clients.Client(conflictState.NewConnectionId).SendAsync("ConflictResolved", new
                 {
                     result = "rejected",
@@ -272,6 +272,11 @@ public class StudentActivityHub : Hub
                     result = "active",
                     message = "Your session remains active"
                 });
+
+                // Give client brief moment to receive message, then force disconnect
+                // Note: We can't use Context here since this method may be called from either connection
+                // The client should disconnect itself upon receiving the "rejected" message
+                // If it doesn't, the connection will remain open but in an inactive state (not in active connections list)
             }
             else
             {

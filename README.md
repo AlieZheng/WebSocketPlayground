@@ -113,14 +113,28 @@ Student → Sees conflict notification on both clients
 Student → Chooses which session to keep via WebSocket message
 Client → Sends "ResolveSessionConflict" with choice ("KeepNew" or "KeepOld")
 Hub → Processes choice:
-  If "KeepNew": Terminates Client A, activates Client B
-  If "KeepOld": Rejects Client B, keeps Client A active
-Hub → Sends "ConflictResolved" to both clients with result
-Hub → Cleans up conflict state
-Hub → Publishes activity events accordingly
+  If "KeepNew": 
+    - Terminates Client A's session (removes from active connections, publishes ended event)
+    - Sends "ConflictResolved" (result="terminated") to Client A
+    - Activates Client B (adds to active connections, publishes started event)
+    - Sends "ConflictResolved" (result="activated") to Client B
+  If "KeepOld": 
+    - Sends "ConflictResolved" (result="rejected") to Client B
+    - Client B must close connection upon receiving rejection message
+    - Sends "ConflictResolved" (result="active") to Client A
+    - Client A remains in active connections
+Hub → Cleans up conflict state from Redis
 
 Timeout Scenario:
 If no response within 30 seconds → Auto-reject new connection (Client B)
+  - Sends "ConflictTimeout" to Client B (client must disconnect)
+  - Sends "ConflictResolved" (result="active") to Client A
+
+Third Connection Attempt:
+If Client C attempts to connect while A-B conflict is unresolved → Immediate rejection
+Client C receives "ConnectionRejected" with reason "Another connection conflict is being resolved"
+Connection is aborted immediately by server
+This prevents cascading conflicts and ensures only one conflict resolution at a time
 ```
 
 ### 3. Student Disconnects
@@ -241,6 +255,8 @@ connection.on("ConflictResolved", (data) => {
     showNotification("Your session is active!");
   } else if (data.result === "rejected" || data.result === "terminated") {
     showNotification("Your session was terminated");
+    // IMPORTANT: Client MUST disconnect when rejected or terminated
+    // The server sends this message before the connection is terminated
     connection.stop();
   }
 });
@@ -254,6 +270,10 @@ connection.on("ConflictTimeout", (data) => {
 // Handle connection rejection
 connection.on("ConnectionRejected", (reason) => {
   showError("Connection rejected: " + reason);
+  // Possible reasons:
+  // - "Missing userId in token"
+  // - "Missing required parameters"  
+  // - "Another connection conflict is being resolved" (3rd connection attempt)
   connection.stop();
 });
 
