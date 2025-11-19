@@ -78,9 +78,9 @@ public class ActivityEventPublisher : IActivityEventPublisher, IDisposable
             var result = await _producer.ProduceAsync(_kafkaConfig.EventsTopic, message, cancellationToken);
 
             _logger.LogInformation(
-                "Published StudentActivityStarted event: UserId={UserId}, AssignmentId={AssignmentId}, AttemptId={AttemptId}, " +
+                "Published StudentActivityStarted event: UserId={UserId}, AssignmentId={AssignmentId}, ParticipationId={ParticipationId}, " +
                 "Topic={Topic}, Partition={Partition}, Offset={Offset}",
-                eventData.UserId, eventData.AssignmentId, eventData.AttemptId,
+                eventData.UserId, eventData.AssignmentId, eventData.ParticipationId,
                 result.Topic, result.Partition.Value, result.Offset.Value);
         }
         catch (ProduceException<string, string> ex)
@@ -125,9 +125,9 @@ public class ActivityEventPublisher : IActivityEventPublisher, IDisposable
             var result = await _producer.ProduceAsync(_kafkaConfig.EventsTopic, message, cancellationToken);
 
             _logger.LogInformation(
-                "Published StudentActivityEnded event: UserId={UserId}, AssignmentId={AssignmentId}, AttemptId={AttemptId}, " +
+                "Published StudentActivityEnded event: UserId={UserId}, AssignmentId={AssignmentId}, ParticipationId={ParticipationId}, " +
                 "Reason={Reason}, Topic={Topic}, Partition={Partition}, Offset={Offset}",
-                eventData.UserId, eventData.AssignmentId, eventData.AttemptId, eventData.Reason,
+                eventData.UserId, eventData.AssignmentId, eventData.ParticipationId, eventData.Reason,
                 result.Topic, result.Partition.Value, result.Offset.Value);
         }
         catch (ProduceException<string, string> ex)

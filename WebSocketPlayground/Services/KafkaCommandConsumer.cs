@@ -219,19 +219,19 @@ public class KafkaCommandConsumer : BackgroundService
             if (targetConnection != null)
             {
                 _logger.LogInformation(
-                    "Found target connection for EndSessionCommand: AttemptId={AttemptId}, ConnectionId={ConnectionId}",
-                    targetConnection.AttemptId, command.ConnectionId);
+                    "Found target connection for EndSessionCommand: ParticipationId={ParticipationId}, ConnectionId={ConnectionId}",
+                    targetConnection.ParticipationId, command.ConnectionId);
 
                 // Remove from active connections and grace period (if any)
-                await connectionStateManager.RemoveActiveConnectionAsync(targetConnection.AttemptId);
-                await connectionStateManager.RemoveGracePeriodStateAsync(targetConnection.AttemptId);
+                await connectionStateManager.RemoveActiveConnectionAsync(targetConnection.ParticipationId);
+                await connectionStateManager.RemoveGracePeriodStateAsync(targetConnection.ParticipationId);
 
                 // Publish activity ended event
                 await eventPublisher.PublishActivityEndedAsync(new StudentActivityEndedEvent
                 {
                     UserId = targetConnection.UserId,
                     AssignmentId = targetConnection.AssignmentId,
-                    AttemptId = targetConnection.AttemptId,
+                    ParticipationId = targetConnection.ParticipationId,
                     ConnectionId = targetConnection.ConnectionId,
                     Reason = DisconnectReason.Disconnected
                 });

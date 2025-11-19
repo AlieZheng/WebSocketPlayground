@@ -49,18 +49,18 @@ public class StudentActivityHub : Hub
             // Get query parameters
             var httpContext = Context.GetHttpContext();
             var assignmentId = httpContext?.Request.Query["assignmentId"].ToString();
-            var attemptId = httpContext?.Request.Query["attemptId"].ToString();
+            var participationId = httpContext?.Request.Query["participationId"].ToString();
 
-            if (string.IsNullOrEmpty(assignmentId) || string.IsNullOrEmpty(attemptId))
+            if (string.IsNullOrEmpty(assignmentId) || string.IsNullOrEmpty(participationId))
             {
-                _logger.LogWarning("Connection rejected: Missing assignmentId or attemptId for user {UserId}", userId);
+                _logger.LogWarning("Connection rejected: Missing assignmentId or participationId for user {UserId}", userId);
                 await Clients.Caller.SendAsync("ConnectionRejected", "Missing required parameters");
                 Context.Abort();
                 return;
             }
 
-            _logger.LogInformation("Connection attempt: UserId={UserId}, AssignmentId={AssignmentId}, AttemptId={AttemptId}, ConnectionId={ConnectionId}",
-                userId, assignmentId, attemptId, Context.ConnectionId);
+            _logger.LogInformation("Connection attempt: UserId={UserId}, AssignmentId={AssignmentId}, ParticipationId={ParticipationId}, ConnectionId={ConnectionId}",
+                userId, assignmentId, participationId, Context.ConnectionId);
 
             // Check if there's an existing conflict being resolved
             var existingConflict = await _connectionStateManager.GetConflictStateAsync(userId);
@@ -79,8 +79,8 @@ public class StudentActivityHub : Hub
             {
                 var existingConnection = userActiveConnections.First();
                 
-                _logger.LogInformation("Duplicate connection detected: UserId={UserId}, OldAttemptId={OldAttemptId}, NewAttemptId={NewAttemptId}",
-                    userId, existingConnection.AttemptId, attemptId);
+                _logger.LogInformation("Duplicate connection detected: UserId={UserId}, OldParticipationId={OldParticipationId}, NewParticipationId={NewParticipationId}",
+                    userId, existingConnection.ParticipationId, participationId);
 
                 // Create conflict state
                 var conflictState = new ConflictState
@@ -90,8 +90,8 @@ public class StudentActivityHub : Hub
                     NewConnectionId = Context.ConnectionId,
                     OldAssignmentId = existingConnection.AssignmentId,
                     NewAssignmentId = assignmentId,
-                    OldAttemptId = existingConnection.AttemptId,
-                    NewAttemptId = attemptId
+                    OldParticipationId = existingConnection.ParticipationId,
+                    NewParticipationId = participationId
                 };
 
                 await _connectionStateManager.SetConflictStateAsync(
@@ -105,8 +105,8 @@ public class StudentActivityHub : Hub
                 await Clients.Client(existingConnection.ConnectionId).SendAsync("SessionConflict", new
                 {
                     message = "Another connection attempt detected",
-                    oldAttemptId = existingConnection.AttemptId,
-                    newAttemptId = attemptId,
+                    oldParticipationId = existingConnection.ParticipationId,
+                    newParticipationId = participationId,
                     oldAssignmentId = existingConnection.AssignmentId,
                     newAssignmentId = assignmentId,
                     isOldConnection = true
@@ -115,8 +115,8 @@ public class StudentActivityHub : Hub
                 await Clients.Caller.SendAsync("SessionConflict", new
                 {
                     message = "Existing session detected",
-                    oldAttemptId = existingConnection.AttemptId,
-                    newAttemptId = attemptId,
+                    oldParticipationId = existingConnection.ParticipationId,
+                    newParticipationId = participationId,
                     oldAssignmentId = existingConnection.AssignmentId,
                     newAssignmentId = assignmentId,
                     isOldConnection = false
@@ -127,14 +127,14 @@ public class StudentActivityHub : Hub
             }
 
             // Check for grace period state (reconnection scenario)
-            var gracePeriodState = await _connectionStateManager.GetGracePeriodStateAsync(attemptId);
+            var gracePeriodState = await _connectionStateManager.GetGracePeriodStateAsync(participationId);
             if (gracePeriodState != null)
             {
-                _logger.LogInformation("Reconnection during grace period for AttemptId={AttemptId}", attemptId);
+                _logger.LogInformation("Reconnection during grace period for ParticipationId={ParticipationId}", participationId);
                 
                 // Cancel grace period
-                await _connectionStateManager.RemoveGracePeriodStateAsync(attemptId);
-                CancelGracePeriodTimer(attemptId);
+                await _connectionStateManager.RemoveGracePeriodStateAsync(participationId);
+                CancelGracePeriodTimer(participationId);
             }
 
             // Create active connection state
@@ -143,7 +143,7 @@ public class StudentActivityHub : Hub
                 ConnectionId = Context.ConnectionId,
                 UserId = userId,
                 AssignmentId = assignmentId,
-                AttemptId = attemptId,
+                ParticipationId = participationId,
                 IsPending = false
             };
 
@@ -156,13 +156,13 @@ public class StudentActivityHub : Hub
                 {
                     UserId = userId,
                     AssignmentId = assignmentId,
-                    AttemptId = attemptId,
+                    ParticipationId = participationId,
                     ConnectionId = Context.ConnectionId
                 });
             }
 
-            _logger.LogInformation("Connection established: UserId={UserId}, AttemptId={AttemptId}, ConnectionId={ConnectionId}",
-                userId, attemptId, Context.ConnectionId);
+            _logger.LogInformation("Connection established: UserId={UserId}, ParticipationId={ParticipationId}, ConnectionId={ConnectionId}",
+                userId, participationId, Context.ConnectionId);
 
             await base.OnConnectedAsync();
         }
@@ -214,12 +214,12 @@ public class StudentActivityHub : Hub
                 _logger.LogInformation("Resolving conflict: Keeping new connection for UserId={UserId}", userId);
 
                 // Terminate old connection
-                var oldConnection = await _connectionStateManager.GetActiveConnectionAsync(conflictState.OldAttemptId);
+                var oldConnection = await _connectionStateManager.GetActiveConnectionAsync(conflictState.OldParticipationId);
                 if (oldConnection != null)
                 {
-                    await _connectionStateManager.RemoveActiveConnectionAsync(conflictState.OldAttemptId);
-                    await _connectionStateManager.RemoveGracePeriodStateAsync(conflictState.OldAttemptId);
-                    CancelGracePeriodTimer(conflictState.OldAttemptId);
+                    await _connectionStateManager.RemoveActiveConnectionAsync(conflictState.OldParticipationId);
+                    await _connectionStateManager.RemoveGracePeriodStateAsync(conflictState.OldParticipationId);
+                    CancelGracePeriodTimer(conflictState.OldParticipationId);
                     
                     await PublishActivityEndedEvent(oldConnection, DisconnectReason.SwitchedAssignment);
                     await Clients.Client(conflictState.OldConnectionId).SendAsync("ConflictResolved", new
@@ -235,7 +235,7 @@ public class StudentActivityHub : Hub
                     ConnectionId = conflictState.NewConnectionId,
                     UserId = userId,
                     AssignmentId = conflictState.NewAssignmentId,
-                    AttemptId = conflictState.NewAttemptId,
+                    ParticipationId = conflictState.NewParticipationId,
                     IsPending = false
                 };
 
@@ -245,7 +245,7 @@ public class StudentActivityHub : Hub
                 {
                     UserId = userId,
                     AssignmentId = conflictState.NewAssignmentId,
-                    AttemptId = conflictState.NewAttemptId,
+                    ParticipationId = conflictState.NewParticipationId,
                     ConnectionId = conflictState.NewConnectionId
                 });
 
@@ -318,10 +318,10 @@ public class StudentActivityHub : Hub
                     _logger.LogInformation("Old connection disconnected during conflict for UserId={UserId}. Auto-resolving to keep new connection.", userId);
                     
                     // Auto-resolve: keep the new connection
-                    var oldConnection = await _connectionStateManager.GetActiveConnectionAsync(conflictState.OldAttemptId);
+                    var oldConnection = await _connectionStateManager.GetActiveConnectionAsync(conflictState.OldParticipationId);
                     if (oldConnection != null)
                     {
-                        await _connectionStateManager.RemoveActiveConnectionAsync(conflictState.OldAttemptId);
+                        await _connectionStateManager.RemoveActiveConnectionAsync(conflictState.OldParticipationId);
                         await PublishActivityEndedEvent(oldConnection, DisconnectReason.Disconnected);
                     }
 
@@ -331,7 +331,7 @@ public class StudentActivityHub : Hub
                         ConnectionId = conflictState.NewConnectionId,
                         UserId = userId,
                         AssignmentId = conflictState.NewAssignmentId,
-                        AttemptId = conflictState.NewAttemptId,
+                        ParticipationId = conflictState.NewParticipationId,
                         IsPending = false
                     };
 
@@ -341,7 +341,7 @@ public class StudentActivityHub : Hub
                     {
                         UserId = userId,
                         AssignmentId = conflictState.NewAssignmentId,
-                        AttemptId = conflictState.NewAttemptId,
+                        ParticipationId = conflictState.NewParticipationId,
                         ConnectionId = conflictState.NewConnectionId
                     });
 
@@ -385,14 +385,14 @@ public class StudentActivityHub : Hub
             }
 
             // Start grace period for reconnection
-            _logger.LogInformation("Starting grace period for AttemptId={AttemptId}", connectionState.AttemptId);
+            _logger.LogInformation("Starting grace period for ParticipationId={ParticipationId}", connectionState.ParticipationId);
             
             var gracePeriodState = new GracePeriodState
             {
                 ConnectionId = connectionState.ConnectionId,
                 UserId = connectionState.UserId,
                 AssignmentId = connectionState.AssignmentId,
-                AttemptId = connectionState.AttemptId,
+                ParticipationId = connectionState.ParticipationId,
                 DisconnectedAt = DateTime.UtcNow
             };
 
@@ -400,7 +400,7 @@ public class StudentActivityHub : Hub
                 gracePeriodState,
                 TimeSpan.FromSeconds(_timeoutConfig.GracePeriodSeconds + 5)); // Extra buffer
 
-            await _connectionStateManager.RemoveActiveConnectionAsync(connectionState.AttemptId);
+            await _connectionStateManager.RemoveActiveConnectionAsync(connectionState.ParticipationId);
 
             // Start grace period timer
             StartGracePeriodTimer(connectionState, _timeoutConfig.GracePeriodSeconds);
@@ -419,43 +419,43 @@ public class StudentActivityHub : Hub
         lock (_timerLock)
         {
             // Cancel existing timer if any
-            CancelGracePeriodTimer(connectionState.AttemptId);
+            CancelGracePeriodTimer(connectionState.ParticipationId);
 
             var timer = new Timer(async _ =>
             {
                 try
                 {
-                    _logger.LogInformation("Grace period expired for AttemptId={AttemptId}", connectionState.AttemptId);
+                    _logger.LogInformation("Grace period expired for ParticipationId={ParticipationId}", connectionState.ParticipationId);
                     
                     // Check if still in grace period (not reconnected)
-                    var gracePeriodState = await _connectionStateManager.GetGracePeriodStateAsync(connectionState.AttemptId);
+                    var gracePeriodState = await _connectionStateManager.GetGracePeriodStateAsync(connectionState.ParticipationId);
                     if (gracePeriodState != null)
                     {
                         await PublishActivityEndedEvent(connectionState, DisconnectReason.GracePeriodExpired);
-                        await _connectionStateManager.RemoveGracePeriodStateAsync(connectionState.AttemptId);
+                        await _connectionStateManager.RemoveGracePeriodStateAsync(connectionState.ParticipationId);
                     }
 
-                    CancelGracePeriodTimer(connectionState.AttemptId);
+                    CancelGracePeriodTimer(connectionState.ParticipationId);
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "Error in grace period timer for AttemptId={AttemptId}", connectionState.AttemptId);
+                    _logger.LogError(ex, "Error in grace period timer for ParticipationId={ParticipationId}", connectionState.ParticipationId);
                 }
             }, null, TimeSpan.FromSeconds(gracePeriodSeconds), Timeout.InfiniteTimeSpan);
 
-            _gracePeriodTimers[connectionState.AttemptId] = timer;
+            _gracePeriodTimers[connectionState.ParticipationId] = timer;
         }
     }
 
-    private void CancelGracePeriodTimer(string attemptId)
+    private void CancelGracePeriodTimer(string participationId)
     {
         lock (_timerLock)
         {
-            if (_gracePeriodTimers.TryGetValue(attemptId, out var timer))
+            if (_gracePeriodTimers.TryGetValue(participationId, out var timer))
             {
                 timer?.Dispose();
-                _gracePeriodTimers.Remove(attemptId);
-                _logger.LogDebug("Grace period timer cancelled for AttemptId={AttemptId}", attemptId);
+                _gracePeriodTimers.Remove(participationId);
+                _logger.LogDebug("Grace period timer cancelled for ParticipationId={ParticipationId}", participationId);
             }
         }
     }
@@ -524,7 +524,7 @@ public class StudentActivityHub : Hub
         {
             UserId = connectionState.UserId,
             AssignmentId = connectionState.AssignmentId,
-            AttemptId = connectionState.AttemptId,
+            ParticipationId = connectionState.ParticipationId,
             ConnectionId = connectionState.ConnectionId,
             Reason = reason
         });

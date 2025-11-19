@@ -19,9 +19,9 @@ public class ConnectionStateManager : IConnectionStateManager
         _db = redis.GetDatabase();
     }
 
-    public async Task<ConnectionState?> GetActiveConnectionAsync(string attemptId)
+    public async Task<ConnectionState?> GetActiveConnectionAsync(string participationId)
     {
-        var key = $"{ConnectionKeyPrefix}{attemptId}";
+        var key = $"{ConnectionKeyPrefix}{participationId}";
         var value = await _db.StringGetAsync(key);
         
         if (value.IsNullOrEmpty)
@@ -38,29 +38,29 @@ public class ConnectionStateManager : IConnectionStateManager
 
     public async Task SetActiveConnectionAsync(ConnectionState connectionState, TimeSpan? expiration = null)
     {
-        var key = $"{ConnectionKeyPrefix}{connectionState.AttemptId}";
+        var key = $"{ConnectionKeyPrefix}{connectionState.ParticipationId}";
         var userKey = $"{UserIndexPrefix}{connectionState.UserId}:{connectionState.AssignmentId}";
         var value = JsonSerializer.Serialize(connectionState);
         
         await _db.StringSetAsync(key, value, expiration);
-        await _db.StringSetAsync(userKey, connectionState.AttemptId, expiration);
+        await _db.StringSetAsync(userKey, connectionState.ParticipationId, expiration);
     }
 
-    public async Task RemoveActiveConnectionAsync(string attemptId)
+    public async Task RemoveActiveConnectionAsync(string participationId)
     {
-        var connection = await GetActiveConnectionAsync(attemptId);
+        var connection = await GetActiveConnectionAsync(participationId);
         if (connection != null)
         {
-            var key = $"{ConnectionKeyPrefix}{attemptId}";
+            var key = $"{ConnectionKeyPrefix}{participationId}";
             var userKey = $"{UserIndexPrefix}{connection.UserId}:{connection.AssignmentId}";
             await _db.KeyDeleteAsync(key);
             await _db.KeyDeleteAsync(userKey);
         }
     }
 
-    public async Task<GracePeriodState?> GetGracePeriodStateAsync(string attemptId)
+    public async Task<GracePeriodState?> GetGracePeriodStateAsync(string participationId)
     {
-        var key = $"{GracePeriodKeyPrefix}{attemptId}";
+        var key = $"{GracePeriodKeyPrefix}{participationId}";
         var value = await _db.StringGetAsync(key);
         
         if (value.IsNullOrEmpty)
@@ -71,15 +71,15 @@ public class ConnectionStateManager : IConnectionStateManager
 
     public async Task SetGracePeriodStateAsync(GracePeriodState gracePeriodState, TimeSpan expiration)
     {
-        var key = $"{GracePeriodKeyPrefix}{gracePeriodState.AttemptId}";
+        var key = $"{GracePeriodKeyPrefix}{gracePeriodState.ParticipationId}";
         var value = JsonSerializer.Serialize(gracePeriodState);
         
         await _db.StringSetAsync(key, value, expiration);
     }
 
-    public async Task RemoveGracePeriodStateAsync(string attemptId)
+    public async Task RemoveGracePeriodStateAsync(string participationId)
     {
-        var key = $"{GracePeriodKeyPrefix}{attemptId}";
+        var key = $"{GracePeriodKeyPrefix}{participationId}";
         await _db.KeyDeleteAsync(key);
     }
 
@@ -93,10 +93,10 @@ public class ConnectionStateManager : IConnectionStateManager
         
         foreach (var key in keys)
         {
-            var attemptId = await _db.StringGetAsync(key);
-            if (!attemptId.IsNullOrEmpty)
+            var participationId = await _db.StringGetAsync(key);
+            if (!participationId.IsNullOrEmpty)
             {
-                var connection = await GetActiveConnectionAsync(attemptId!);
+                var connection = await GetActiveConnectionAsync(participationId!);
                 if (connection != null)
                 {
                     connections.Add(connection);
