@@ -1,6 +1,6 @@
-# WebSocket Playground - Student Activity Monitoring Service
+# WebSocket Student Activity Tracker
 
-This is a SignalR-based microservice that tracks student assignment attempts in real-time using WebSocket connections.
+This is a SignalR-based microservice that tracks student assignment participations in real-time using WebSocket connections.
 
 ## Architecture Overview
 
@@ -90,9 +90,9 @@ Update `appsettings.json` with your environment settings:
 
 ## Connection Flow
 
-### 1. Student Starts Assignment
+### 1. Student Starts Participation
 ```
-Client → SignalR Hub: Connect with JWT cookie + query params (assignmentId, attemptId)
+Client → SignalR Hub: Connect with JWT cookie + query params (assignmentId, participationId)
 Hub → Validates JWT and extracts userId
 Hub → Checks for existing active connection from this user
   If exists: Detect duplicate connection
@@ -160,10 +160,10 @@ Hub → Reestablishes active connection (no new StartedEvent)
 
 The service uses the following Redis key patterns for state management:
 
-- `signalr:connection:{attemptId}` - Active connection state
+- `signalr:connection:{participationId}` - Active connection state
 - `signalr:conflict:{userId}` - Conflict state when duplicate connection detected (35s TTL)
-- `signalr:grace:{attemptId}` - Grace period state (35s TTL)
-- `signalr:user:{userId}:{assignmentId}` - User-to-attempt index
+- `signalr:grace:{participationId}` - Grace period state (35s TTL)
+- `signalr:user:{userId}:{assignmentId}` - User-to-participation index
 
 ## SignalR Client Messages
 
@@ -173,7 +173,7 @@ The service uses the following Redis key patterns for state management:
 ```javascript
 connection.on("SessionConflict", (data) => {
   console.log(data.message); // "Existing session detected" or "Another connection attempt detected"
-  console.log("Old Attempt:", data.oldAttemptId, "New Attempt:", data.newAttemptId);
+  console.log("Old Participation:", data.oldParticipationId, "New Participation:", data.newParticipationId);
   console.log("Is Old Connection:", data.isOldConnection);
   // Show UI to let user choose: "KeepNew" or "KeepOld"
 });
@@ -234,7 +234,7 @@ import * as signalR from "@microsoft/signalr";
 
 // Cookie with JWT is automatically sent
 const connection = new signalR.HubConnectionBuilder()
-  .withUrl("https://your-server/hubs/studentActivity?assignmentId=123&attemptId=456")
+  .withUrl("https://your-server/hubs/studentActivity?assignmentId=123&participationId=456")
   .withAutomaticReconnect()
   .build();
 
@@ -306,7 +306,7 @@ The service publishes two types of events to the `student-activity-events` topic
 {
   "userId": "user-123",
   "assignmentId": "assignment-001",
-  "attemptId": "attempt-001",
+  "participationId": "participation-001",
   "timestamp": "2024-11-17T10:30:00Z"
 }
 ```
@@ -316,7 +316,7 @@ The service publishes two types of events to the `student-activity-events` topic
 {
   "userId": "user-123",
   "assignmentId": "assignment-001",
-  "attemptId": "attempt-001",
+  "participationId": "participation-001",
   "timestamp": "2024-11-17T10:35:00Z",
   "reason": "Disconnected" | "GracePeriodExpired" | "SwitchedAssignment"
 }
@@ -431,7 +431,7 @@ Test utilities:
    https://localhost:7144/test-client.html
    ```
    - Paste the token from step 1
-   - Enter assignmentId and attemptId
+   - Enter assignmentId and participationId
    - Click "Connect"
 
 ### Manual Testing with Browser Console
@@ -441,7 +441,7 @@ document.cookie = "access_token=your-jwt-token; path=/";
 
 // Connect to hub
 const connection = new signalR.HubConnectionBuilder()
-  .withUrl("https://localhost:7144/hubs/studentActivity?assignmentId=test-assignment&attemptId=test-attempt-1")
+  .withUrl("https://localhost:7144/hubs/studentActivity?assignmentId=test-assignment&participationId=test-participation-1")
   .build();
 
 await connection.start();
@@ -450,10 +450,10 @@ await connection.start();
 ## Monitoring and Debugging
 
 The service logs all connection lifecycle events:
-- Connection attempts with userId, assignmentId, attemptId
+- Connection attempts with userId, assignmentId, participationId
 - Duplicate connection detection
 - Grace period start/cancel/expiry
-- Pending connection promotion/timeout
+- Conflict resolution timeout
 - Event publishing
 
 Check logs for troubleshooting:
