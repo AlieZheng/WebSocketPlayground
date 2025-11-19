@@ -6,12 +6,13 @@ This is a SignalR-based microservice that tracks student assignment participatio
 
 ### Key Features
 - **JWT Authentication**: Students are authenticated via JWT tokens (supports both HttpOnly cookies and query string for testing)
+- **Guid-based IDs**: All business entity IDs (UserId, AssignmentId, ParticipationId) use Guid format for type safety
 - **Manual Signature Validation**: Custom signature validation bypasses `kid` requirement for symmetric keys
-- **Single Active Connection Enforcement**: Only one active connection per student+assignment with session switching support
+- **Single Active Connection Enforcement**: Only one active connection per student with session switching support
 - **Redis-backed State Management**: Distributed connection state using Redis for multi-instance scalability
 - **Grace Period Reconnection**: 30-second grace period for network hiccups before marking students offline
-- **Kafka Integration**: Fully implemented - publishes activity events and consumes session termination commands
-- **Pending Connection Queue**: New connections wait for old sessions to terminate with 10-second timeout
+- **KafkaFlow Integration**: Modern Kafka integration with typed handlers and automatic serialization
+- **Distributed Timer System**: Redis-based timers for multi-instance compatibility (grace periods, conflict timeouts)
 
 ## Project Structure
 
@@ -167,8 +168,62 @@ The service uses the following Redis key patterns for state management:
 - `signalr:conflict:{userId}` - Conflict state when duplicate connection detected (35s TTL)
 - `signalr:grace:{participationId}` - Grace period state (35s TTL)
 - `signalr:user:{userId}:{assignmentId}` - User-to-participation index
+- `signalr:scheduled:{taskId}` - Scheduled task data (for distributed timers)
+- `signalr:scheduled:index` - Sorted set for time-based task queries (score = ExecuteAt.Ticks)
 
-## SignalR Client Messages
+## Distributed Timer System
+
+The service uses a **Redis-based distributed timer system** for multi-instance compatibility. This replaces in-memory timers and ensures that grace period and conflict timeout timers work correctly across multiple server instances.
+
+### How It Works
+
+1. **ScheduledTaskManager**: Stores timer metadata in Redis
+   - When a timer needs to be scheduled (grace period, conflict timeout), a `ScheduledTask` is created in Redis
+   - Uses Redis Sorted Sets for efficient time-based queries
+   - Each task has a TTL to prevent orphaned tasks
+
+2. **ScheduledTaskExecutor**: Background service that executes due tasks
+   - Runs on all instances (checks every 1 second)
+   - Queries Redis for tasks where `ExecuteAt <= now`
+   - Executes the task (grace period expiry, conflict timeout)
+   - Deletes the task after execution
+
+3. **Benefits**:
+   - ✅ Any instance can schedule, cancel, or execute any timer
+   - ✅ Timers survive instance crashes (stored in Redis)
+   - ✅ Works with any load balancing strategy
+   - ✅ No race conditions or duplicate executions
+
+### Timer Types
+
+**Grace Period Timer**: Scheduled when a student disconnects
+```json
+{
+  "taskId": "guid",
+  "taskType": "GracePeriod",
+  "executeAt": "2024-11-19T10:30:00Z",
+  "payload": {
+    "participationId": "...",
+    "userId": "...",
+    "assignmentId": "...",
+    "connectionId": "..."
+  }
+}
+```
+
+**Conflict Timeout Timer**: Scheduled when duplicate connection detected
+```json
+{
+  "taskId": "guid",
+  "taskType": "ConflictTimeout",
+  "executeAt": "2024-11-19T10:30:30Z",
+  "payload": {
+    "userId": "...",
+    "oldConnectionId": "...",
+    "newConnectionId": "..."
+  }
+}
+```
 
 ### Server → Client Messages
 
@@ -235,9 +290,13 @@ await connection.invoke("ResolveSessionConflict", "KeepOld");
 ```javascript
 import * as signalR from "@microsoft/signalr";
 
+// IDs must be valid Guids
+const assignmentId = "660e8400-e29b-41d4-a716-446655440001";
+const participationId = "770e8400-e29b-41d4-a716-446655440002";
+
 // Cookie with JWT is automatically sent
 const connection = new signalR.HubConnectionBuilder()
-  .withUrl("https://your-server/hubs/studentActivity?assignmentId=123&participationId=456")
+  .withUrl(`https://your-server/hubs/studentActivity?assignmentId=${assignmentId}&participationId=${participationId}`)
   .withAutomaticReconnect()
   .build();
 
