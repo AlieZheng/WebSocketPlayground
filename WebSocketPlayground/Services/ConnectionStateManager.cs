@@ -19,7 +19,7 @@ public class ConnectionStateManager : IConnectionStateManager
         _db = redis.GetDatabase();
     }
 
-    public async Task<ConnectionState?> GetActiveConnectionAsync(string participationId)
+    public async Task<ConnectionState?> GetActiveConnectionAsync(Guid participationId)
     {
         var key = $"{ConnectionKeyPrefix}{participationId}";
         var value = await _db.StringGetAsync(key);
@@ -30,7 +30,7 @@ public class ConnectionStateManager : IConnectionStateManager
         return JsonSerializer.Deserialize<ConnectionState>(value!);
     }
 
-    public async Task<bool> HasActiveConnectionForUserAndAssignmentAsync(string userId, string assignmentId)
+    public async Task<bool> HasActiveConnectionForUserAndAssignmentAsync(Guid userId, Guid assignmentId)
     {
         var userKey = $"{UserIndexPrefix}{userId}:{assignmentId}";
         return await _db.KeyExistsAsync(userKey);
@@ -43,10 +43,10 @@ public class ConnectionStateManager : IConnectionStateManager
         var value = JsonSerializer.Serialize(connectionState);
         
         await _db.StringSetAsync(key, value, expiration);
-        await _db.StringSetAsync(userKey, connectionState.ParticipationId, expiration);
+        await _db.StringSetAsync(userKey, connectionState.ParticipationId.ToString(), expiration);
     }
 
-    public async Task RemoveActiveConnectionAsync(string participationId)
+    public async Task RemoveActiveConnectionAsync(Guid participationId)
     {
         var connection = await GetActiveConnectionAsync(participationId);
         if (connection != null)
@@ -58,7 +58,7 @@ public class ConnectionStateManager : IConnectionStateManager
         }
     }
 
-    public async Task<GracePeriodState?> GetGracePeriodStateAsync(string participationId)
+    public async Task<GracePeriodState?> GetGracePeriodStateAsync(Guid participationId)
     {
         var key = $"{GracePeriodKeyPrefix}{participationId}";
         var value = await _db.StringGetAsync(key);
@@ -77,13 +77,13 @@ public class ConnectionStateManager : IConnectionStateManager
         await _db.StringSetAsync(key, value, expiration);
     }
 
-    public async Task RemoveGracePeriodStateAsync(string participationId)
+    public async Task RemoveGracePeriodStateAsync(Guid participationId)
     {
         var key = $"{GracePeriodKeyPrefix}{participationId}";
         await _db.KeyDeleteAsync(key);
     }
 
-    public async Task<List<ConnectionState>> GetActiveConnectionsByUserIdAsync(string userId)
+    public async Task<List<ConnectionState>> GetActiveConnectionsByUserIdAsync(Guid userId)
     {
         var server = _redis.GetServer(_redis.GetEndPoints().First());
         var pattern = $"{UserIndexPrefix}{userId}:*";
@@ -93,10 +93,10 @@ public class ConnectionStateManager : IConnectionStateManager
         
         foreach (var key in keys)
         {
-            var participationId = await _db.StringGetAsync(key);
-            if (!participationId.IsNullOrEmpty)
+            var participationIdStr = await _db.StringGetAsync(key);
+            if (!participationIdStr.IsNullOrEmpty && Guid.TryParse(participationIdStr!, out var participationId))
             {
-                var connection = await GetActiveConnectionAsync(participationId!);
+                var connection = await GetActiveConnectionAsync(participationId);
                 if (connection != null)
                 {
                     connections.Add(connection);
@@ -107,7 +107,7 @@ public class ConnectionStateManager : IConnectionStateManager
         return connections;
     }
 
-    public async Task<ConflictState?> GetConflictStateAsync(string userId)
+    public async Task<ConflictState?> GetConflictStateAsync(Guid userId)
     {
         var key = $"{ConflictKeyPrefix}{userId}";
         var value = await _db.StringGetAsync(key);
@@ -126,7 +126,7 @@ public class ConnectionStateManager : IConnectionStateManager
         await _db.StringSetAsync(key, value, expiration);
     }
 
-    public async Task RemoveConflictStateAsync(string userId)
+    public async Task RemoveConflictStateAsync(Guid userId)
     {
         var key = $"{ConflictKeyPrefix}{userId}";
         await _db.KeyDeleteAsync(key);

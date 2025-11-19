@@ -34,26 +34,28 @@ public class StudentActivityHub : Hub
     {
         try
         {
-            // Extract user ID from JWT claims
-            var userId = Context.User?.FindFirst(ClaimTypes.NameIdentifier)?.Value 
+            // Extract user ID from JWT claims and parse as Guid
+            var userIdStr = Context.User?.FindFirst(ClaimTypes.NameIdentifier)?.Value 
                 ?? Context.User?.FindFirst("sub")?.Value;
             
-            if (string.IsNullOrEmpty(userId))
+            if (string.IsNullOrEmpty(userIdStr) || !Guid.TryParse(userIdStr, out var userId))
             {
-                _logger.LogWarning("Connection rejected: No user ID found in claims");
+                _logger.LogWarning("Connection rejected: No valid user ID found in claims");
                 await Clients.Caller.SendAsync("ConnectionRejected", "Missing userId in token");
                 Context.Abort();
                 return;
             }
 
-            // Get query parameters
+            // Get query parameters and parse as Guids
             var httpContext = Context.GetHttpContext();
-            var assignmentId = httpContext?.Request.Query["assignmentId"].ToString();
-            var participationId = httpContext?.Request.Query["participationId"].ToString();
+            var assignmentIdStr = httpContext?.Request.Query["assignmentId"].ToString();
+            var participationIdStr = httpContext?.Request.Query["participationId"].ToString();
 
-            if (string.IsNullOrEmpty(assignmentId) || string.IsNullOrEmpty(participationId))
+            if (string.IsNullOrEmpty(assignmentIdStr) || string.IsNullOrEmpty(participationIdStr) ||
+                !Guid.TryParse(assignmentIdStr, out var assignmentId) || 
+                !Guid.TryParse(participationIdStr, out var participationId))
             {
-                _logger.LogWarning("Connection rejected: Missing assignmentId or participationId for user {UserId}", userId);
+                _logger.LogWarning("Connection rejected: Missing or invalid assignmentId or participationId for user {UserId}", userId);
                 await Clients.Caller.SendAsync("ConnectionRejected", "Missing required parameters");
                 Context.Abort();
                 return;
@@ -177,12 +179,12 @@ public class StudentActivityHub : Hub
     {
         try
         {
-            var userId = Context.User?.FindFirst(ClaimTypes.NameIdentifier)?.Value 
+            var userIdStr = Context.User?.FindFirst(ClaimTypes.NameIdentifier)?.Value 
                 ?? Context.User?.FindFirst("sub")?.Value;
 
-            if (string.IsNullOrEmpty(userId))
+            if (string.IsNullOrEmpty(userIdStr) || !Guid.TryParse(userIdStr, out var userId))
             {
-                _logger.LogWarning("ResolveSessionConflict rejected: No user ID found in claims");
+                _logger.LogWarning("ResolveSessionConflict rejected: No valid user ID found in claims");
                 return;
             }
 
@@ -300,10 +302,10 @@ public class StudentActivityHub : Hub
             _logger.LogInformation("Disconnection: ConnectionId={ConnectionId}, Exception={Exception}",
                 Context.ConnectionId, exception?.Message);
 
-            var userId = Context.User?.FindFirst(ClaimTypes.NameIdentifier)?.Value 
+            var userIdStr = Context.User?.FindFirst(ClaimTypes.NameIdentifier)?.Value 
                 ?? Context.User?.FindFirst("sub")?.Value;
 
-            if (string.IsNullOrEmpty(userId))
+            if (string.IsNullOrEmpty(userIdStr) || !Guid.TryParse(userIdStr, out var userId))
             {
                 await base.OnDisconnectedAsync(exception);
                 return;
@@ -443,24 +445,25 @@ public class StudentActivityHub : Hub
                 }
             }, null, TimeSpan.FromSeconds(gracePeriodSeconds), Timeout.InfiniteTimeSpan);
 
-            _gracePeriodTimers[connectionState.ParticipationId] = timer;
+            _gracePeriodTimers[connectionState.ParticipationId.ToString()] = timer;
         }
     }
 
-    private void CancelGracePeriodTimer(string participationId)
+    private void CancelGracePeriodTimer(Guid participationId)
     {
         lock (_timerLock)
         {
-            if (_gracePeriodTimers.TryGetValue(participationId, out var timer))
+            var participationIdStr = participationId.ToString();
+            if (_gracePeriodTimers.TryGetValue(participationIdStr, out var timer))
             {
                 timer?.Dispose();
-                _gracePeriodTimers.Remove(participationId);
+                _gracePeriodTimers.Remove(participationIdStr);
                 _logger.LogDebug("Grace period timer cancelled for ParticipationId={ParticipationId}", participationId);
             }
         }
     }
 
-    private void StartConflictTimeoutTimer(string userId)
+    private void StartConflictTimeoutTimer(Guid userId)
     {
         lock (_timerLock)
         {
@@ -501,18 +504,19 @@ public class StudentActivityHub : Hub
                 }
             }, null, TimeSpan.FromSeconds(_timeoutConfig.ConflictResolutionTimeoutSeconds), Timeout.InfiniteTimeSpan);
 
-            _conflictTimeoutTimers[userId] = timer;
+            _conflictTimeoutTimers[userId.ToString()] = timer;
         }
     }
 
-    private void CancelConflictTimeoutTimer(string userId)
+    private void CancelConflictTimeoutTimer(Guid userId)
     {
         lock (_timerLock)
         {
-            if (_conflictTimeoutTimers.TryGetValue(userId, out var timer))
+            var userIdStr = userId.ToString();
+            if (_conflictTimeoutTimers.TryGetValue(userIdStr, out var timer))
             {
                 timer?.Dispose();
-                _conflictTimeoutTimers.Remove(userId);
+                _conflictTimeoutTimers.Remove(userIdStr);
                 _logger.LogDebug("Conflict timeout timer cancelled for UserId={UserId}", userId);
             }
         }

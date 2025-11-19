@@ -4,16 +4,16 @@ namespace WebSocketPlayground.Services;
 
 public interface IConnectionStateManager
 {
-    Task<ConnectionState?> GetActiveConnectionAsync(string participationId);
-    Task<bool> HasActiveConnectionForUserAndAssignmentAsync(string userId, string assignmentId);
+    Task<ConnectionState?> GetActiveConnectionAsync(Guid participationId);
+    Task<bool> HasActiveConnectionForUserAndAssignmentAsync(Guid userId, Guid assignmentId);
     Task SetActiveConnectionAsync(ConnectionState connectionState, TimeSpan? expiration = null);
-    Task RemoveActiveConnectionAsync(string participationId);
-    Task<GracePeriodState?> GetGracePeriodStateAsync(string participationId);
+    Task RemoveActiveConnectionAsync(Guid participationId);
+    Task<GracePeriodState?> GetGracePeriodStateAsync(Guid participationId);
     Task SetGracePeriodStateAsync(GracePeriodState gracePeriodState, TimeSpan expiration);
-    Task RemoveGracePeriodStateAsync(string participationId);
-    Task<List<ConnectionState>> GetActiveConnectionsByUserIdAsync(string userId);
-    Task<ConflictState?> GetConflictStateAsync(string userId);
+    Task RemoveGracePeriodStateAsync(Guid participationId);
+    Task<List<ConnectionState>> GetActiveConnectionsByUserIdAsync(Guid userId);
+    Task<ConflictState?> GetConflictStateAsync(Guid userId);
     Task SetConflictStateAsync(ConflictState conflictState, TimeSpan expiration);
-    Task RemoveConflictStateAsync(string userId);
+    Task RemoveConflictStateAsync(Guid userId);
 }
 
