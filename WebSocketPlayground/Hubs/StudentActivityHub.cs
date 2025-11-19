@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.SignalR;
 using WebSocketPlayground.Configuration;
@@ -12,20 +13,20 @@ public class StudentActivityHub : Hub
 {
     private readonly IConnectionStateManager _connectionStateManager;
     private readonly IActivityEventPublisher _eventPublisher;
+    private readonly IScheduledTaskManager _scheduledTaskManager;
     private readonly TimeoutConfiguration _timeoutConfig;
     private readonly ILogger<StudentActivityHub> _logger;
-    private static readonly Dictionary<string, System.Threading.Timer> _gracePeriodTimers = new();
-    private static readonly Dictionary<string, System.Threading.Timer> _conflictTimeoutTimers = new();
-    private static readonly object _timerLock = new();
 
     public StudentActivityHub(
         IConnectionStateManager connectionStateManager,
         IActivityEventPublisher eventPublisher,
+        IScheduledTaskManager scheduledTaskManager,
         TimeoutConfiguration timeoutConfig,
         ILogger<StudentActivityHub> logger)
     {
         _connectionStateManager = connectionStateManager;
         _eventPublisher = eventPublisher;
+        _scheduledTaskManager = scheduledTaskManager;
         _timeoutConfig = timeoutConfig;
         _logger = logger;
     }
@@ -101,7 +102,7 @@ public class StudentActivityHub : Hub
                     TimeSpan.FromSeconds(_timeoutConfig.ConflictResolutionTimeoutSeconds + 5)); // Extra buffer
 
                 // Start timeout timer for conflict resolution
-                StartConflictTimeoutTimer(userId);
+                await StartConflictTimeoutTimerAsync(userId, existingConnection.ConnectionId, Context.ConnectionId);
 
                 // Notify both connections about the conflict
                 await Clients.Client(existingConnection.ConnectionId).SendAsync("SessionConflict", new
@@ -136,7 +137,7 @@ public class StudentActivityHub : Hub
                 
                 // Cancel grace period
                 await _connectionStateManager.RemoveGracePeriodStateAsync(participationId);
-                CancelGracePeriodTimer(participationId);
+                await CancelGracePeriodTimerAsync(participationId);
             }
 
             // Create active connection state
@@ -209,7 +210,7 @@ public class StudentActivityHub : Hub
             }
 
             // Cancel timeout timer
-            CancelConflictTimeoutTimer(userId);
+            await CancelConflictTimeoutTimerAsync(userId);
 
             if (choice.Equals("KeepNew", StringComparison.OrdinalIgnoreCase))
             {
@@ -221,7 +222,7 @@ public class StudentActivityHub : Hub
                 {
                     await _connectionStateManager.RemoveActiveConnectionAsync(conflictState.OldParticipationId);
                     await _connectionStateManager.RemoveGracePeriodStateAsync(conflictState.OldParticipationId);
-                    CancelGracePeriodTimer(conflictState.OldParticipationId);
+                    await CancelGracePeriodTimerAsync(conflictState.OldParticipationId);
                     
                     await PublishActivityEndedEvent(oldConnection, DisconnectReason.SwitchedAssignment);
                     await Clients.Client(conflictState.OldConnectionId).SendAsync("ConflictResolved", new
@@ -353,7 +354,7 @@ public class StudentActivityHub : Hub
                         message = "Your session is now active (old session disconnected)"
                     });
 
-                    CancelConflictTimeoutTimer(userId);
+                    await CancelConflictTimeoutTimerAsync(userId);
                     await _connectionStateManager.RemoveConflictStateAsync(userId);
                 }
                 else if (Context.ConnectionId == conflictState.NewConnectionId)
@@ -367,7 +368,7 @@ public class StudentActivityHub : Hub
                         message = "Your session remains active (new connection disconnected)"
                     });
 
-                    CancelConflictTimeoutTimer(userId);
+                    await CancelConflictTimeoutTimerAsync(userId);
                     await _connectionStateManager.RemoveConflictStateAsync(userId);
                 }
 
@@ -405,7 +406,7 @@ public class StudentActivityHub : Hub
             await _connectionStateManager.RemoveActiveConnectionAsync(connectionState.ParticipationId);
 
             // Start grace period timer
-            StartGracePeriodTimer(connectionState, _timeoutConfig.GracePeriodSeconds);
+            await StartGracePeriodTimerAsync(connectionState, _timeoutConfig.GracePeriodSeconds);
 
             await base.OnDisconnectedAsync(exception);
         }
@@ -416,109 +417,90 @@ public class StudentActivityHub : Hub
         }
     }
 
-    private void StartGracePeriodTimer(ConnectionState connectionState, int gracePeriodSeconds)
+    private async Task StartGracePeriodTimerAsync(ConnectionState connectionState, int gracePeriodSeconds)
     {
-        lock (_timerLock)
+        // Cancel existing timer if any
+        await CancelGracePeriodTimerAsync(connectionState.ParticipationId);
+
+        var executeAt = DateTime.UtcNow.AddSeconds(gracePeriodSeconds);
+        var payload = new GracePeriodTaskPayload
         {
-            // Cancel existing timer if any
-            CancelGracePeriodTimer(connectionState.ParticipationId);
+            ParticipationId = connectionState.ParticipationId,
+            UserId = connectionState.UserId,
+            AssignmentId = connectionState.AssignmentId,
+            ConnectionId = connectionState.ConnectionId
+        };
 
-            var timer = new Timer(async _ =>
-            {
-                try
-                {
-                    _logger.LogInformation("Grace period expired for ParticipationId={ParticipationId}", connectionState.ParticipationId);
-                    
-                    // Check if still in grace period (not reconnected)
-                    var gracePeriodState = await _connectionStateManager.GetGracePeriodStateAsync(connectionState.ParticipationId);
-                    if (gracePeriodState != null)
-                    {
-                        await PublishActivityEndedEvent(connectionState, DisconnectReason.GracePeriodExpired);
-                        await _connectionStateManager.RemoveGracePeriodStateAsync(connectionState.ParticipationId);
-                    }
-
-                    CancelGracePeriodTimer(connectionState.ParticipationId);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Error in grace period timer for ParticipationId={ParticipationId}", connectionState.ParticipationId);
-                }
-            }, null, TimeSpan.FromSeconds(gracePeriodSeconds), Timeout.InfiniteTimeSpan);
-
-            _gracePeriodTimers[connectionState.ParticipationId.ToString()] = timer;
-        }
+        var payloadJson = JsonSerializer.Serialize(payload);
+        var taskId = await _scheduledTaskManager.ScheduleTaskAsync("GracePeriod", executeAt, payloadJson);
+        
+        _logger.LogDebug("Scheduled grace period task {TaskId} for ParticipationId={ParticipationId}, executeAt={ExecuteAt}",
+            taskId, connectionState.ParticipationId, executeAt);
     }
 
-    private void CancelGracePeriodTimer(Guid participationId)
+    private async Task CancelGracePeriodTimerAsync(Guid participationId)
     {
-        lock (_timerLock)
+        // Cancel all grace period tasks for this participationId
+        var cancelled = await _scheduledTaskManager.CancelTasksByTypeAsync("GracePeriod", task =>
         {
-            var participationIdStr = participationId.ToString();
-            if (_gracePeriodTimers.TryGetValue(participationIdStr, out var timer))
+            try
             {
-                timer?.Dispose();
-                _gracePeriodTimers.Remove(participationIdStr);
-                _logger.LogDebug("Grace period timer cancelled for ParticipationId={ParticipationId}", participationId);
+                var payload = JsonSerializer.Deserialize<GracePeriodTaskPayload>(task.Payload);
+                return payload?.ParticipationId == participationId;
             }
-        }
-    }
-
-    private void StartConflictTimeoutTimer(Guid userId)
-    {
-        lock (_timerLock)
-        {
-            // Cancel existing timer if any
-            CancelConflictTimeoutTimer(userId);
-
-            var timer = new Timer(async _ =>
+            catch
             {
-                try
-                {
-                    _logger.LogInformation("Conflict resolution timeout for UserId={UserId}", userId);
-                    
-                    var conflictState = await _connectionStateManager.GetConflictStateAsync(userId);
-                    if (conflictState != null)
-                    {
-                        // Auto-reject new connection on timeout
-                        _logger.LogInformation("Auto-rejecting new connection due to timeout: UserId={UserId}", userId);
-
-                        await Clients.Client(conflictState.NewConnectionId).SendAsync("ConflictTimeout", new
-                        {
-                            message = "Connection timed out - no response to conflict resolution"
-                        });
-
-                        await Clients.Client(conflictState.OldConnectionId).SendAsync("ConflictResolved", new
-                        {
-                            result = "active",
-                            message = "Your session remains active (conflict resolution timed out)"
-                        });
-
-                        await _connectionStateManager.RemoveConflictStateAsync(userId);
-                    }
-
-                    CancelConflictTimeoutTimer(userId);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Error in conflict timeout timer for UserId={UserId}", userId);
-                }
-            }, null, TimeSpan.FromSeconds(_timeoutConfig.ConflictResolutionTimeoutSeconds), Timeout.InfiniteTimeSpan);
-
-            _conflictTimeoutTimers[userId.ToString()] = timer;
-        }
-    }
-
-    private void CancelConflictTimeoutTimer(Guid userId)
-    {
-        lock (_timerLock)
-        {
-            var userIdStr = userId.ToString();
-            if (_conflictTimeoutTimers.TryGetValue(userIdStr, out var timer))
-            {
-                timer?.Dispose();
-                _conflictTimeoutTimers.Remove(userIdStr);
-                _logger.LogDebug("Conflict timeout timer cancelled for UserId={UserId}", userId);
+                return false;
             }
+        });
+
+        if (cancelled > 0)
+        {
+            _logger.LogDebug("Cancelled {Count} grace period timer(s) for ParticipationId={ParticipationId}", 
+                cancelled, participationId);
+        }
+    }
+
+    private async Task StartConflictTimeoutTimerAsync(Guid userId, string oldConnectionId, string newConnectionId)
+    {
+        // Cancel existing timer if any
+        await CancelConflictTimeoutTimerAsync(userId);
+
+        var executeAt = DateTime.UtcNow.AddSeconds(_timeoutConfig.ConflictResolutionTimeoutSeconds);
+        var payload = new ConflictTimeoutTaskPayload
+        {
+            UserId = userId,
+            OldConnectionId = oldConnectionId,
+            NewConnectionId = newConnectionId
+        };
+
+        var payloadJson = JsonSerializer.Serialize(payload);
+        var taskId = await _scheduledTaskManager.ScheduleTaskAsync("ConflictTimeout", executeAt, payloadJson);
+        
+        _logger.LogDebug("Scheduled conflict timeout task {TaskId} for UserId={UserId}, executeAt={ExecuteAt}",
+            taskId, userId, executeAt);
+    }
+
+    private async Task CancelConflictTimeoutTimerAsync(Guid userId)
+    {
+        // Cancel all conflict timeout tasks for this userId
+        var cancelled = await _scheduledTaskManager.CancelTasksByTypeAsync("ConflictTimeout", task =>
+        {
+            try
+            {
+                var payload = JsonSerializer.Deserialize<ConflictTimeoutTaskPayload>(task.Payload);
+                return payload?.UserId == userId;
+            }
+            catch
+            {
+                return false;
+            }
+        });
+
+        if (cancelled > 0)
+        {
+            _logger.LogDebug("Cancelled {Count} conflict timeout timer(s) for UserId={UserId}", 
+                cancelled, userId);
         }
     }
 

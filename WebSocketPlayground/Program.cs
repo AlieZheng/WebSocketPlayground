@@ -172,7 +172,9 @@ builder.Services.AddSignalR()
 // Register application services
 builder.Services.AddSingleton<IConnectionStateManager, ConnectionStateManager>();
 builder.Services.AddSingleton<IActivityEventPublisher, ActivityEventPublisher>();
+builder.Services.AddSingleton<IScheduledTaskManager, ScheduledTaskManager>();
 builder.Services.AddHostedService<KafkaCommandConsumer>();
+builder.Services.AddHostedService<ScheduledTaskExecutor>();
 
 var app = builder.Build();
 

@@ -471,17 +471,25 @@ dotnet run --verbosity detailed
 
 4. **SignalR Scale-out**: The Redis backplane is configured for multi-instance deployment
 
-5. **Kafka Production Setup**: 
+5. **✅ Multi-Instance Support**: The implementation now uses **Redis-based distributed timer tracking** for full multi-instance support:
+   - ✅ **Single Instance**: Production ready
+   - ✅ **Multiple Instances**: Fully supported with Redis-based scheduled tasks
+   - ✅ Grace period timers are distributed across instances
+   - ✅ Conflict timeout timers are distributed across instances
+   - ✅ Any instance can execute any timer (survives instance crashes)
+   - Implementation details: See `ScheduledTaskManager` and `ScheduledTaskExecutor` services
+
+6. **Kafka Production Setup**: 
    - Use multiple brokers for high availability
    - Configure appropriate retention policies for event topics
    - Set up monitoring for consumer lag
    - Consider using schema registry for message validation
 
-6. **Health Checks**: Add health check endpoints for Redis, Kafka, and SignalR connectivity monitoring
+7. **Health Checks**: Add health check endpoints for Redis, Kafka, and SignalR connectivity monitoring
 
-7. **Logging**: Configure structured logging (Serilog, Application Insights) for production monitoring
+8. **Logging**: Configure structured logging (Serilog, Application Insights) for production monitoring
 
-8. **Security**: 
+9. **Security**: 
    - Remove the `/generate-token` endpoint in production
    - Remove or secure the test client endpoint
    - Use proper certificate validation for Kafka SSL/TLS
