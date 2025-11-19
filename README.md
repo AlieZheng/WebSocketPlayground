@@ -84,7 +84,7 @@ Update `appsettings.json` with your environment settings:
 ```json
 "TimeoutConfiguration": {
   "GracePeriodSeconds": 30,
-  "PendingConnectionTimeoutSeconds": 10
+  "ConflictResolutionTimeoutSeconds": 30
 }
 ```
 
@@ -94,33 +94,42 @@ Update `appsettings.json` with your environment settings:
 ```
 Client → SignalR Hub: Connect with JWT cookie + query params (assignmentId, attemptId)
 Hub → Validates JWT and extracts userId
-Hub → Checks for existing active connection
-  If exists: Queue as pending connection with 10s timeout
-  If not: Create active connection
+Hub → Checks for existing active connection from this user
+  If exists: Detect duplicate connection
+  If not: Check for grace period (reconnection)
+Hub → Creates active connection
 Hub → Publishes StudentActivityStartedEvent to Kafka
 ```
 
-### 2. Duplicate Connection Detected
+### 2. Duplicate Connection Detected (Simplified WebSocket-Only Flow)
 ```
 Client A: Active connection for Assignment 1
 Client B: Attempts connection for Assignment 1 (same student)
-Hub → Queues Client B as pending
-Hub → Sends "ConnectionPending" message to Client B
-Student → Makes choice via Assignment Service
-Assignment Service → Sends EndSessionCommand to Kafka
-Kafka Consumer → Receives command
-Hub → Terminates Client A connection
-Hub → Promotes Client B to active
-Hub → Sends "ConnectionActivated" to Client B
+Hub → Detects existing active connection from same userId
+Hub → Creates conflict state in Redis (35s TTL)
+Hub → Sends "SessionConflict" message to both Client A and Client B with session details
+Hub → Starts 30-second auto-rejection timeout timer
+Student → Sees conflict notification on both clients
+Student → Chooses which session to keep via WebSocket message
+Client → Sends "ResolveSessionConflict" with choice ("KeepNew" or "KeepOld")
+Hub → Processes choice:
+  If "KeepNew": Terminates Client A, activates Client B
+  If "KeepOld": Rejects Client B, keeps Client A active
+Hub → Sends "ConflictResolved" to both clients with result
+Hub → Cleans up conflict state
+Hub → Publishes activity events accordingly
+
+Timeout Scenario:
+If no response within 30 seconds → Auto-reject new connection (Client B)
 ```
 
 ### 3. Student Disconnects
 ```
 Client → Disconnects (network issue/browser close)
 Hub → OnDisconnectedAsync triggered
-Hub → Checks for pending connections
-  If pending exists: Promote to active immediately
-  If not: Start 30-second grace period
+Hub → Checks if connection is part of unresolved conflict
+  If yes: Auto-resolve (keep whichever connection is still alive)
+  If no: Start 30-second grace period
 Hub → After grace period: Publish StudentActivityEndedEvent
 ```
 
@@ -132,21 +141,13 @@ Hub → Cancels grace period timer
 Hub → Reestablishes active connection (no new StartedEvent)
 ```
 
-### 5. Student Switches Assignment
-```
-Client → Connects for Assignment 2 (has active connection for Assignment 1)
-Hub → Detects user has active connection for different assignment
-Hub → Immediately ends Assignment 1 session (no grace period)
-Hub → Publishes StudentActivityEndedEvent with reason "SwitchedAssignment"
-Hub → Establishes new connection for Assignment 2
-```
 
 ## Redis Key Patterns
 
 The service uses the following Redis key patterns for state management:
 
 - `signalr:connection:{attemptId}` - Active connection state
-- `signalr:pending:{attemptId}` - Pending connection state (10s TTL)
+- `signalr:conflict:{userId}` - Conflict state when duplicate connection detected (35s TTL)
 - `signalr:grace:{attemptId}` - Grace period state (35s TTL)
 - `signalr:user:{userId}:{assignmentId}` - User-to-attempt index
 
@@ -154,33 +155,60 @@ The service uses the following Redis key patterns for state management:
 
 ### Server → Client Messages
 
-**ConnectionPending**: Sent when connection is queued due to duplicate
+**SessionConflict**: Sent when a duplicate connection is detected
 ```javascript
-connection.on("ConnectionPending", (message) => {
-  console.log(message); // "Another session is active. Waiting for session switch."
+connection.on("SessionConflict", (data) => {
+  console.log(data.message); // "Existing session detected" or "Another connection attempt detected"
+  console.log("Old Attempt:", data.oldAttemptId, "New Attempt:", data.newAttemptId);
+  console.log("Is Old Connection:", data.isOldConnection);
+  // Show UI to let user choose: "KeepNew" or "KeepOld"
 });
 ```
 
-**ConnectionActivated**: Sent when pending connection becomes active
+**ConflictResolved**: Sent when conflict is resolved
 ```javascript
-connection.on("ConnectionActivated", (message) => {
-  console.log(message); // "Your connection is now active."
+connection.on("ConflictResolved", (data) => {
+  console.log(data.result); // "activated", "active", "rejected", or "terminated"
+  console.log(data.message);
+  if (data.result === "rejected" || data.result === "terminated") {
+    connection.stop();
+  }
 });
 ```
 
-**ConnectionRejected**: Sent when pending connection times out
+**ConflictTimeout**: Sent when conflict resolution times out (30s)
 ```javascript
-connection.on("ConnectionRejected", (reason) => {
-  console.log(reason); // "SessionSwitchTimeout"
-});
-```
-
-**ForceDisconnect**: Sent when session is terminated by command
-```javascript
-connection.on("ForceDisconnect", (reason) => {
-  console.log(reason); // "Session ended by command"
+connection.on("ConflictTimeout", (data) => {
+  console.log(data.message); // "Connection timed out - no response to conflict resolution"
   connection.stop();
 });
+```
+
+**ConnectionRejected**: Sent when connection is rejected for various reasons
+```javascript
+connection.on("ConnectionRejected", (reason) => {
+  console.log(reason); // "Missing userId in token", "Missing required parameters", etc.
+  connection.stop();
+});
+```
+
+**ForceDisconnect**: Sent when session is terminated by administrative command
+```javascript
+connection.on("ForceDisconnect", (reason) => {
+  console.log(reason); // "Session ended by administrative command"
+  connection.stop();
+});
+```
+
+### Client → Server Messages
+
+**ResolveSessionConflict**: Sent by client to resolve connection conflict
+```javascript
+// Keep the new connection
+await connection.invoke("ResolveSessionConflict", "KeepNew");
+
+// OR keep the old connection
+await connection.invoke("ResolveSessionConflict", "KeepOld");
 ```
 
 ## Client Connection Example
@@ -196,20 +224,40 @@ const connection = new signalR.HubConnectionBuilder()
   .withAutomaticReconnect()
   .build();
 
-// Handle server messages
-connection.on("ConnectionPending", (message) => {
-  showNotification("Waiting for session switch...");
+// Handle session conflict
+connection.on("SessionConflict", async (data) => {
+  console.log("Session conflict detected:", data);
+  
+  // Show UI to user asking which session to keep
+  const choice = await showConflictDialog(data); // Returns "KeepNew" or "KeepOld"
+  
+  // Send resolution back to server
+  await connection.invoke("ResolveSessionConflict", choice);
 });
 
-connection.on("ConnectionActivated", (message) => {
-  showNotification("Connection active!");
+// Handle conflict resolution result
+connection.on("ConflictResolved", (data) => {
+  if (data.result === "activated" || data.result === "active") {
+    showNotification("Your session is active!");
+  } else if (data.result === "rejected" || data.result === "terminated") {
+    showNotification("Your session was terminated");
+    connection.stop();
+  }
 });
 
+// Handle conflict timeout
+connection.on("ConflictTimeout", (data) => {
+  showError("Connection timed out: " + data.message);
+  connection.stop();
+});
+
+// Handle connection rejection
 connection.on("ConnectionRejected", (reason) => {
   showError("Connection rejected: " + reason);
   connection.stop();
 });
 
+// Handle administrative force disconnect
 connection.on("ForceDisconnect", (reason) => {
   showNotification("Session ended: " + reason);
   connection.stop();
@@ -262,23 +310,30 @@ The service publishes two types of events to the `student-activity-events` topic
 
 ### Command Consumption (KafkaCommandConsumer)
 
-The service consumes `EndSessionCommand` messages from the `student-activity-commands` topic:
+The service consumes `EndSessionCommand` messages from the `student-activity-commands` topic.
 
+**IMPORTANT**: `EndSessionCommand` is now **ONLY used for administrative forced logouts**, not for duplicate session resolution. Duplicate sessions are handled entirely within the WebSocket/SignalR flow via the SessionConflict mechanism.
+
+**Use cases for EndSessionCommand:**
+- Administrative actions (e.g., teacher forcibly ending a student's session)
+- System-initiated disconnections (e.g., maintenance, security)
+- External triggers that require immediate session termination
+
+**EndSessionCommand format:**
 ```json
 {
   "userId": "user-123",
   "assignmentId": "assignment-001",
-  "attemptId": "attempt-001",
-  "connectionId": "xyz-connection-id",
-  "reason": "Session switch requested"
+  "connectionId": "xyz-connection-id"
 }
 ```
 
 When a command is received, the service:
-1. Validates the command (checks if attemptId and connectionId match)
-2. Sends `ForceDisconnect` message to the client
-3. Terminates the SignalR connection
-4. Commits the Kafka offset (manual commit for reliability)
+1. Validates the command (checks if userId, assignmentId, and connectionId match)
+2. Removes the connection from active state
+3. Publishes `StudentActivityEndedEvent`
+4. Sends `ForceDisconnect` message to the client
+5. Commits the Kafka offset (manual commit for reliability)
 
 ### Consumer Configuration
 - **Manual offset commit**: Ensures at-least-once processing
