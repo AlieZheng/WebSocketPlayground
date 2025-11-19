@@ -1,5 +1,6 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Text;
+using KafkaFlow;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
 using StackExchange.Redis;
@@ -173,10 +174,45 @@ builder.Services.AddSignalR()
 builder.Services.AddSingleton<IConnectionStateManager, ConnectionStateManager>();
 builder.Services.AddSingleton<IActivityEventPublisher, ActivityEventPublisher>();
 builder.Services.AddSingleton<IScheduledTaskManager, ScheduledTaskManager>();
-builder.Services.AddHostedService<KafkaCommandConsumer>();
 builder.Services.AddHostedService<ScheduledTaskExecutor>();
 
+// Configure KafkaFlow
+builder.Services.AddKafka(kafka => kafka
+    .AddCluster(cluster => cluster
+        .WithBrokers(new[] { kafkaConfig.BootstrapServers })
+        .CreateTopicIfNotExists(kafkaConfig.EventsTopic, 3, 1) // 3 partitions, 1 replica
+        .CreateTopicIfNotExists(kafkaConfig.CommandsTopic, 3, 1)
+        .AddProducer(
+            "activity-events-producer",
+            producer => producer
+                .DefaultTopic(kafkaConfig.EventsTopic)
+                .AddMiddlewares(m => m
+                    .AddSerializer<KafkaFlow.Serializer.JsonCoreSerializer>()
+                )
+                .WithCompression(Confluent.Kafka.CompressionType.Gzip)
+                .WithAcks(Acks.All)
+        )
+        .AddConsumer(consumer => consumer
+            .Topic(kafkaConfig.CommandsTopic)
+            .WithGroupId(kafkaConfig.ConsumerGroupId)
+            .WithBufferSize(100)
+            .WithWorkersCount(3)
+            .WithAutoOffsetReset(AutoOffsetReset.Latest)
+            .AddMiddlewares(middlewares => middlewares
+                .AddDeserializer<KafkaFlow.Serializer.JsonCoreDeserializer>()
+                .AddTypedHandlers(h => h
+                    .AddHandler<EndSessionCommandHandler>()
+                )
+            )
+        )
+    )
+);
+
 var app = builder.Build();
+
+// Start KafkaFlow bus
+var kafkaBus = app.Services.CreateKafkaBus();
+await kafkaBus.StartAsync();
 
 // Enable static files for serving test-client.html
 app.UseStaticFiles();
