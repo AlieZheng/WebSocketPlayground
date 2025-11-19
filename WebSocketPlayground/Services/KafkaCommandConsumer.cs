@@ -177,8 +177,8 @@ public class KafkaCommandConsumer : BackgroundService
             }
 
             // Validate command
-            if (string.IsNullOrEmpty(command.UserId) || 
-                string.IsNullOrEmpty(command.AssignmentId) || 
+            if (command.UserId == Guid.Empty || 
+                command.AssignmentId == Guid.Empty || 
                 string.IsNullOrEmpty(command.ConnectionId))
             {
                 _logger.LogWarning("Invalid EndSessionCommand (missing required fields) at offset {Offset}: {Command}", 
