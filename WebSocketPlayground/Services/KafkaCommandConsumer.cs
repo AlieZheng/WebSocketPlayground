@@ -7,6 +7,18 @@ using WebSocketPlayground.Models;
 
 namespace WebSocketPlayground.Services;
 
+/// <summary>
+/// Background service that consumes EndSessionCommand messages from Kafka.
+/// 
+/// NOTE: This consumer is now ONLY used for administrative forced logouts/disconnects,
+/// not for duplicate session resolution. Duplicate sessions are now handled entirely
+/// within the WebSocket/SignalR flow via the SessionConflict mechanism.
+/// 
+/// Use cases for EndSessionCommand:
+/// - Administrative actions (e.g., teacher forcibly ending a student's session)
+/// - System-initiated disconnections (e.g., maintenance, security)
+/// - External triggers that require immediate session termination
+/// </summary>
 public class KafkaCommandConsumer : BackgroundService
 {
     private readonly IHubContext<StudentActivityHub> _hubContext;
@@ -192,11 +204,12 @@ public class KafkaCommandConsumer : BackgroundService
         try
         {
             _logger.LogInformation(
-                "Processing EndSessionCommand: UserId={UserId}, AssignmentId={AssignmentId}, ConnectionId={ConnectionId}",
+                "Processing EndSessionCommand (Administrative): UserId={UserId}, AssignmentId={AssignmentId}, ConnectionId={ConnectionId}",
                 command.UserId, command.AssignmentId, command.ConnectionId);
 
             using var scope = _serviceProvider.CreateScope();
             var connectionStateManager = scope.ServiceProvider.GetRequiredService<IConnectionStateManager>();
+            var eventPublisher = scope.ServiceProvider.GetRequiredService<IActivityEventPublisher>();
 
             // Find the connection by userId and assignmentId
             var userConnections = await connectionStateManager.GetActiveConnectionsByUserIdAsync(command.UserId);
@@ -209,40 +222,37 @@ public class KafkaCommandConsumer : BackgroundService
                     "Found target connection for EndSessionCommand: AttemptId={AttemptId}, ConnectionId={ConnectionId}",
                     targetConnection.AttemptId, command.ConnectionId);
 
-                // Check for pending connection to promote
-                var pendingConnection = await connectionStateManager.GetPendingConnectionAsync(targetConnection.AttemptId);
-                
+                // Remove from active connections and grace period (if any)
+                await connectionStateManager.RemoveActiveConnectionAsync(targetConnection.AttemptId);
+                await connectionStateManager.RemoveGracePeriodStateAsync(targetConnection.AttemptId);
+
+                // Publish activity ended event
+                await eventPublisher.PublishActivityEndedAsync(new StudentActivityEndedEvent
+                {
+                    UserId = targetConnection.UserId,
+                    AssignmentId = targetConnection.AssignmentId,
+                    AttemptId = targetConnection.AttemptId,
+                    ConnectionId = targetConnection.ConnectionId,
+                    Reason = DisconnectReason.Disconnected
+                });
+
                 // Send disconnect message to the client
                 await _hubContext.Clients.Client(command.ConnectionId).SendAsync(
                     "ForceDisconnect", 
-                    "Session ended by command", 
+                    "Session ended by administrative command", 
                     cancellationToken);
 
                 _logger.LogInformation(
-                    "Sent ForceDisconnect message to ConnectionId={ConnectionId}. Pending connection exists: {HasPending}",
-                    command.ConnectionId, pendingConnection != null);
-
-                // The actual cleanup and promotion will be handled by OnDisconnectedAsync in the hub
-                // when the client disconnects in response to ForceDisconnect message
+                    "Sent ForceDisconnect message to ConnectionId={ConnectionId}",
+                    command.ConnectionId);
             }
             else
             {
                 // Check if this is a duplicate/stale command (connection already terminated)
-                var gracePeriodState = await connectionStateManager.GetGracePeriodStateAsync(command.ConnectionId);
-                if (gracePeriodState != null)
-                {
-                    _logger.LogInformation(
-                        "EndSessionCommand received for connection in grace period: ConnectionId={ConnectionId}. " +
-                        "This is likely a duplicate or stale command (idempotent operation).",
-                        command.ConnectionId);
-                }
-                else
-                {
-                    _logger.LogWarning(
-                        "EndSessionCommand: Connection not found for UserId={UserId}, AssignmentId={AssignmentId}, ConnectionId={ConnectionId}. " +
-                        "Connection may have already been terminated or never existed.",
-                        command.UserId, command.AssignmentId, command.ConnectionId);
-                }
+                _logger.LogWarning(
+                    "EndSessionCommand: Connection not found for UserId={UserId}, AssignmentId={AssignmentId}, ConnectionId={ConnectionId}. " +
+                    "Connection may have already been terminated or never existed (idempotent operation).",
+                    command.UserId, command.AssignmentId, command.ConnectionId);
             }
         }
         catch (Exception ex)
@@ -250,7 +260,6 @@ public class KafkaCommandConsumer : BackgroundService
             _logger.LogError(ex, 
                 "Error handling EndSessionCommand for UserId={UserId}, AssignmentId={AssignmentId}, ConnectionId={ConnectionId}",
                 command.UserId, command.AssignmentId, command.ConnectionId);
-            throw;
         }
     }
 
@@ -260,4 +269,5 @@ public class KafkaCommandConsumer : BackgroundService
         await base.StopAsync(cancellationToken);
     }
 }
+
 

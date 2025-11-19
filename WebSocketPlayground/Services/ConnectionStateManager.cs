@@ -9,7 +9,7 @@ public class ConnectionStateManager : IConnectionStateManager
     private readonly IConnectionMultiplexer _redis;
     private readonly IDatabase _db;
     private const string ConnectionKeyPrefix = "signalr:connection:";
-    private const string PendingKeyPrefix = "signalr:pending:";
+    private const string ConflictKeyPrefix = "signalr:conflict:";
     private const string GracePeriodKeyPrefix = "signalr:grace:";
     private const string UserIndexPrefix = "signalr:user:";
 
@@ -22,17 +22,6 @@ public class ConnectionStateManager : IConnectionStateManager
     public async Task<ConnectionState?> GetActiveConnectionAsync(string attemptId)
     {
         var key = $"{ConnectionKeyPrefix}{attemptId}";
-        var value = await _db.StringGetAsync(key);
-        
-        if (value.IsNullOrEmpty)
-            return null;
-
-        return JsonSerializer.Deserialize<ConnectionState>(value!);
-    }
-
-    public async Task<ConnectionState?> GetPendingConnectionAsync(string attemptId)
-    {
-        var key = $"{PendingKeyPrefix}{attemptId}";
         var value = await _db.StringGetAsync(key);
         
         if (value.IsNullOrEmpty)
@@ -57,25 +46,6 @@ public class ConnectionStateManager : IConnectionStateManager
         await _db.StringSetAsync(userKey, connectionState.AttemptId, expiration);
     }
 
-    public async Task SetPendingConnectionAsync(ConnectionState connectionState, TimeSpan expiration)
-    {
-        var key = $"{PendingKeyPrefix}{connectionState.AttemptId}";
-        var value = JsonSerializer.Serialize(connectionState);
-        
-        await _db.StringSetAsync(key, value, expiration);
-    }
-
-    public async Task PromotePendingToActiveAsync(string attemptId)
-    {
-        var pendingConnection = await GetPendingConnectionAsync(attemptId);
-        if (pendingConnection != null)
-        {
-            pendingConnection.IsPending = false;
-            await SetActiveConnectionAsync(pendingConnection);
-            await RemovePendingConnectionAsync(attemptId);
-        }
-    }
-
     public async Task RemoveActiveConnectionAsync(string attemptId)
     {
         var connection = await GetActiveConnectionAsync(attemptId);
@@ -86,12 +56,6 @@ public class ConnectionStateManager : IConnectionStateManager
             await _db.KeyDeleteAsync(key);
             await _db.KeyDeleteAsync(userKey);
         }
-    }
-
-    public async Task RemovePendingConnectionAsync(string attemptId)
-    {
-        var key = $"{PendingKeyPrefix}{attemptId}";
-        await _db.KeyDeleteAsync(key);
     }
 
     public async Task<GracePeriodState?> GetGracePeriodStateAsync(string attemptId)
@@ -142,5 +106,29 @@ public class ConnectionStateManager : IConnectionStateManager
         
         return connections;
     }
-}
 
+    public async Task<ConflictState?> GetConflictStateAsync(string userId)
+    {
+        var key = $"{ConflictKeyPrefix}{userId}";
+        var value = await _db.StringGetAsync(key);
+        
+        if (value.IsNullOrEmpty)
+            return null;
+
+        return JsonSerializer.Deserialize<ConflictState>(value!);
+    }
+
+    public async Task SetConflictStateAsync(ConflictState conflictState, TimeSpan expiration)
+    {
+        var key = $"{ConflictKeyPrefix}{conflictState.UserId}";
+        var value = JsonSerializer.Serialize(conflictState);
+        
+        await _db.StringSetAsync(key, value, expiration);
+    }
+
+    public async Task RemoveConflictStateAsync(string userId)
+    {
+        var key = $"{ConflictKeyPrefix}{userId}";
+        await _db.KeyDeleteAsync(key);
+    }
+}
