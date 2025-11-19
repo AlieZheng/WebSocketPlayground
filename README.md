@@ -32,9 +32,12 @@ WebSocketPlayground/
 ├── Services/
 │   ├── IConnectionStateManager.cs     # Connection state management interface
 │   ├── ConnectionStateManager.cs      # Redis-backed implementation
+│   ├── IScheduledTaskManager.cs       # Distributed timer management interface
+│   ├── ScheduledTaskManager.cs        # Redis-backed timer implementation
+│   ├── ScheduledTaskExecutor.cs       # Background service for timer execution
 │   ├── IActivityEventPublisher.cs     # Event publisher interface
-│   ├── ActivityEventPublisher.cs      # Kafka producer (fully implemented)
-│   └── KafkaCommandConsumer.cs        # Kafka consumer for commands (fully implemented)
+│   ├── ActivityEventPublisher.cs      # KafkaFlow producer for events
+│   └── EndSessionCommandHandler.cs    # KafkaFlow message handler for commands
 ├── Hubs/
 │   └── StudentActivityHub.cs          # SignalR hub for student connections
 ├── Program.cs                         # Application startup and configuration
